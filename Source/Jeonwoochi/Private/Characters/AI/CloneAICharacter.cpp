@@ -72,41 +72,41 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 	if (!Source || !GetMesh()) return;
 
 	USkeletalMeshComponent* SrcMain = Source->GetMesh();
-	USkeletalMeshComponent* DstMain = GetMesh();
-	if (!SrcMain || !DstMain) return;
+	USkeletalMeshComponent* CloneBodyMesh = GetMesh();
+	if (!SrcMain || !CloneBodyMesh) return;
 
 	// ─────────────────────────────────────────────────────────────
 	// 0) 메인 바디 메쉬: 메시/머티리얼 복사 + 안정화(중요)
 	// ─────────────────────────────────────────────────────────────
-	DstMain->SetSkeletalMeshAsset(SrcMain->GetSkeletalMeshAsset());
+	CloneBodyMesh->SetSkeletalMeshAsset(SrcMain->GetSkeletalMeshAsset());
 	for (int32 i = 0; i < SrcMain->GetNumMaterials(); ++i)
 	{
-		DstMain->SetMaterial(i, SrcMain->GetMaterial(i));
+		CloneBodyMesh->SetMaterial(i, SrcMain->GetMaterial(i));
 	}
 
-	// ▶ 옷 튐 방지 핵심: 리더(바디)도 항상 포즈 갱신 + URO 끄기
-	DstMain->bEnableUpdateRateOptimizations = false;
-	DstMain->VisibilityBasedAnimTickOption =
-		EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	// 옷 튐 방지 핵심: 리더(바디)도 항상 포즈 갱신 + URO 끄기
+	CloneBodyMesh->bEnableUpdateRateOptimizations = true;
+	CloneBodyMesh->VisibilityBasedAnimTickOption =
+		EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 
 	// 커브/모프를 팔로워로 전파(바운드 튐/LOD 이슈 완화)
-	DstMain->bPropagateCurvesToFollowers = true;
+	CloneBodyMesh->bPropagateCurvesToFollowers = true;
 
 	// 팔로워(옷) 안정화 공통 처리 람다
 	auto StabilizeFollower = [&](USkeletalMeshComponent* Follower, bool bLeaderPose)
 		{
-			if (!Follower || Follower == DstMain) return;
+			if (!Follower || Follower == CloneBodyMesh) return;
 
 			// 리더 먼저 → 팔로워 나중에 틱 (1프레임 래그/덜컹 방지)
-			Follower->AddTickPrerequisiteComponent(DstMain);
+			// Follower->AddTickPrerequisiteComponent(CloneBodyMesh);
 
 			// 항상 포즈 갱신 + URO 끄기
-			Follower->bEnableUpdateRateOptimizations = false;
+			Follower->bEnableUpdateRateOptimizations = true;
 			Follower->VisibilityBasedAnimTickOption =
-				EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+				EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 
 			// 팔로워는 월드 충돌로 튀지 않게 충돌 비활성
-			Follower->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			// Follower->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 			// 바운드 정책
 			Follower->bUseBoundsFromLeaderPoseComponent = bLeaderPose; // LeaderPose일 땐 true, CopyPose일 땐 false
@@ -117,7 +117,7 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 			Follower->SetOverridePostProcessAnimBP(nullptr, /*ReinitAnimInstances=*/true);
 
 			// 첫 프레임 Cloth 폭주 방지
-			Follower->ForceClothNextUpdateTeleportAndReset();
+			// Follower->ForceClothNextUpdateTeleportAndReset();
 		};
 
 	// ─────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 	Source->GetComponents(SrcSkels);
 
 	TMap<USkeletalMeshComponent*, USkeletalMeshComponent*> SkelMap; // 소스→복제
-	SkelMap.Add(SrcMain, DstMain);
+	SkelMap.Add(SrcMain, CloneBodyMesh);
 
 	for (USkeletalMeshComponent* Src : SrcSkels)
 	{
@@ -156,13 +156,13 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 	for (auto& Pair : SkelMap)
 	{
 		USkeletalMeshComponent* Src = Pair.Key;
-		USkeletalMeshComponent* Dst = Pair.Value;
-		if (!Dst || Dst == DstMain) continue;
+		USkeletalMeshComponent* CloneFollowerMesh = Pair.Value;
+		if (!CloneFollowerMesh || CloneFollowerMesh == CloneBodyMesh) continue;
 
 		USceneComponent* SrcParent = Src->GetAttachParent();
 		const FName Socket = Src->GetAttachSocketName();
 
-		USceneComponent* DstParent = DstMain;
+		USceneComponent* DstParent = CloneBodyMesh;
 		if (USkeletalMeshComponent* SrcParentSkel = Cast<USkeletalMeshComponent>(SrcParent))
 		{
 			if (USkeletalMeshComponent** Found = SkelMap.Find(SrcParentSkel))
@@ -171,62 +171,67 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 			}
 		}
 
-		Dst->DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);
-		Dst->AttachToComponent(DstParent, FAttachmentTransformRules::KeepRelativeTransform, Socket);
+		CloneFollowerMesh->DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);
+		CloneFollowerMesh->AttachToComponent(DstParent, FAttachmentTransformRules::KeepRelativeTransform, Socket);
 	}
 
 	// ─────────────────────────────────────────────────────────────
 	// 3) 팔로워(옷) → 바디 포즈 따라가게 + 안정화
 	// ─────────────────────────────────────────────────────────────
-	const USkeleton* MainSkel = DstMain->GetSkeletalMeshAsset()
-		? DstMain->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+	const USkeleton* MainSkel = CloneBodyMesh->GetSkeletalMeshAsset()
+		? CloneBodyMesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
 
 	for (auto& Pair : SkelMap)
 	{
-		USkeletalMeshComponent* Dst = Pair.Value;
-		if (!Dst || Dst == DstMain) continue;
+		USkeletalMeshComponent* CloneFollowerMesh = Pair.Value;
+		if (!CloneFollowerMesh || CloneFollowerMesh == CloneBodyMesh) continue;
 
-		const USkeleton* DstSkel = Dst->GetSkeletalMeshAsset()
-			? Dst->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+		const USkeleton* DstSkel = CloneFollowerMesh->GetSkeletalMeshAsset()
+			? CloneFollowerMesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
 
 		const bool bSameSkeleton = (MainSkel && DstSkel && MainSkel == DstSkel);
-
+		
 		if (bSameSkeleton)
 		{
 			// LeaderPose 경로: 팔로워는 애님 평가 X
-			Dst->SetAnimInstanceClass(nullptr);
-			Dst->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-			Dst->SetLeaderPoseComponent(DstMain);
+			CloneFollowerMesh->SetAnimInstanceClass(nullptr);
+			CloneFollowerMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+			CloneFollowerMesh->SetLeaderPoseComponent(CloneBodyMesh);
 
-			StabilizeFollower(Dst, /*bLeaderPose=*/true);
+			StabilizeFollower(CloneFollowerMesh, /*bLeaderPose=*/true);
 		}
 		else
 		{
 			if (ClothRetargetABP)
 			{
-				Dst->SetLeaderPoseComponent(nullptr);
-				Dst->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-				Dst->SetAnimInstanceClass(ClothRetargetABP);
+				// 다른 Skeleton을 사용하는 옷은 Retarget AnimBP 경로 사용
+				CloneFollowerMesh->SetLeaderPoseComponent(nullptr);
+				CloneFollowerMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+				CloneFollowerMesh->SetAnimInstanceClass(ClothRetargetABP);
 
-				if (UAnimInstance* Inst = Dst->GetAnimInstance())
+				// 옷 AnimBP가 참조할 본체 메쉬 전달
+				if (UAnimInstance* RetargetAnimInstance = CloneFollowerMesh->GetAnimInstance())
 				{
-					static const FName VarName(TEXT("BodyMesh")); // ABP 변수명과 동일
-					if (FObjectProperty* P = FindFProperty<FObjectProperty>(Inst->GetClass(), VarName))
+					static const FName VarName(TEXT("BodyMesh"));
+					if (FObjectProperty* BodyMeshProperty = FindFProperty<FObjectProperty>(
+						RetargetAnimInstance->GetClass(), VarName))
 					{
-						P->SetObjectPropertyValue_InContainer(Inst, DstMain);
+						// 옷 AnimBP 안의 BodyMesh 변수에, 분신 본체 메쉬를 넣어줌.
+						BodyMeshProperty->SetObjectPropertyValue_InContainer(RetargetAnimInstance, CloneBodyMesh);
 					}
 				}
 
 				// 안정화(이전 답변의 StabilizeFollower 유지)
-				Dst->AddTickPrerequisiteComponent(DstMain);
-				Dst->bEnableUpdateRateOptimizations = false;
-				Dst->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-				Dst->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-				Dst->bUseBoundsFromLeaderPoseComponent = false; // Retarget 경로에선 보통 false가 안정적
-				Dst->ForceClothNextUpdateTeleportAndReset();
-				Dst->SuspendClothingSimulation();
+				CloneFollowerMesh->AddTickPrerequisiteComponent(CloneBodyMesh);
+				CloneFollowerMesh->bEnableUpdateRateOptimizations = false;
+				CloneFollowerMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+				CloneFollowerMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				CloneFollowerMesh->bUseBoundsFromLeaderPoseComponent = false; // Retarget 경로에선 보통 false가 안정적
+				CloneFollowerMesh->ForceClothNextUpdateTeleportAndReset();
+				// CloneFollowerMesh->SuspendClothingSimulation();
 			}
 		}
+		
 	}
 
 #if HAS_GROOM
@@ -243,7 +248,7 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 			UGroomComponent* NewG = DuplicateObject<UGroomComponent>(SrcG, this, NewName);
 
 			USceneComponent* SrcParent = SrcG->GetAttachParent();
-			USceneComponent* DstParent = DstMain;
+			USceneComponent* DstParent = CloneBodyMesh;
 			if (USkeletalMeshComponent* SrcParentSkel = Cast<USkeletalMeshComponent>(SrcParent))
 			{
 				if (USkeletalMeshComponent** Found = SkelMap.Find(SrcParentSkel))
@@ -279,7 +284,7 @@ void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 		NewCAC->SetRelativeTransform(SrcCAC->GetRelativeTransform());
 
 		USceneComponent* SrcParent = SrcCAC->GetAttachParent();
-		USceneComponent* DstParent = DstMain;
+		USceneComponent* DstParent = CloneBodyMesh;
 		if (USkeletalMeshComponent* SrcParentSkel = Cast<USkeletalMeshComponent>(SrcParent))
 		{
 			if (USkeletalMeshComponent** Found = SkelMap.Find(SrcParentSkel))

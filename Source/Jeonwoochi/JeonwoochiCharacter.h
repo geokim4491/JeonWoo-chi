@@ -17,7 +17,6 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 
-// 나중에 리팩토링해서 고쳐야 함
 #include "Public/Components/Boss/BossActivateComponent.h"
 #include "Public/Components/Boss/BossPhaseComponent.h"
 #include "Public/Miscellaneous/CutScene/CutSceneTriggerActor.h"

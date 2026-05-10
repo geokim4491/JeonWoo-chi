@@ -92,7 +92,6 @@ void UBossActivateComponent::PlaySequence()
 		CachedBoss->SetActorTransform(BeforeBossTransform);
 	}
 
-	// 나중에 구조 바꾸기
 	CachedChar->SetBossActiveComp(this);
 
 	PlacedSequenceActor->PlaybackSettings.bDisableCameraCuts = false;
@@ -138,7 +137,6 @@ void UBossActivateComponent::OnFinished()
 			CachedBoss->SetActorTransform(AfterBossTransform);
 		}
 
-		// 나중에 구조 바꾸기
 		CachedChar->SetBossActiveComp(nullptr);
 		CachedChar->GetUIComponent()->SetCinematicUIHidden(false);
 	}
