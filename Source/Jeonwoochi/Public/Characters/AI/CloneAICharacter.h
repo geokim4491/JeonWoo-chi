@@ -21,8 +21,6 @@ public:
 	ACloneAICharacter();
 
 protected:
-	virtual void EndPlay(EEndPlayReason::Type EndPlayReason) override;
-
 	UPROPERTY(EditDefaultsOnly, Category = "Clone|Anim")
 	TSubclassOf<UAnimInstance> ClothRetargetABP;
 };

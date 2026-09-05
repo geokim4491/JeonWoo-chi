@@ -27,7 +27,9 @@ public class Jeonwoochi : ModuleRules
             "Slate", "SlateCore",         // 런타임에서 사용 가능
             "Chaos", "ChaosSolverEngine",
             "FieldSystemEngine",
-            "AsyncLoadingScreen"
+            "AsyncLoadingScreen",
+
+            "HairStrandsCore"
         });
 
         // 에디터 전용 모듈은 여기로

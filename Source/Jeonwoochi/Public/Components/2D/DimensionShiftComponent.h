@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -8,14 +6,11 @@
 
 class ABaseCharacter;
 class UBoxComponent;
-class APaperCharacter;
 class AJeonwoochiPaperCharacter;
 class AJeonwoochiCharacter;
 class UNiagaraSystem;
 class UParticleSystem;
-
-class UGeometryCollection;                 // Chaos Destruction 플러그인
-class AGeometryCollectionActor;
+class UGeometryCollection;
 
 UENUM(BlueprintType)
 enum class EComebackCondition : uint8
@@ -30,28 +25,26 @@ struct F2DTransitionCharacters
 {
 	GENERATED_BODY()
 
-	/** 타깃 */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Transition")
 	TObjectPtr<ABaseCharacter> Character = nullptr;
 
-	/** 2D 전환 후 임시로 캐릭터를 어디에 배치해둘지 */
+	/** 2D 전환 후 Transform */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite)
 	FTransform BeforeTransform;
 
-	/** 다시 3D 전환 후 캐릭터의 위치 */
+	/** 3D 복귀 후 Transform */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite)
 	FTransform AfterTransform;
 };
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnCompleteComebackCondition, EComebackCondition);
 
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class JEONWOOCHI_API UDimensionShiftComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
-public:	
-	// Sets default values for this component's properties
+public:
 	UDimensionShiftComponent();
 
 	UFUNCTION() void SetCachedChar(AActor* Char);
@@ -59,12 +52,11 @@ public:
 	UFUNCTION() void Start3DTransition();
 
 	UFUNCTION(BlueprintCallable, Category = "Break")
-	void BreakOwnerAndDestroy();           // ← 이 함수를 호출하면 "부서짐 → Destroy"
+	void BreakOwnerAndDestroy();
 
 	FOnCompleteComebackCondition OnCompleteComebackCondition;
 
 protected:
-	// Called when the game starts
 	virtual void BeginPlay() override;
 	virtual void EndPlay(EEndPlayReason::Type EndplayReason) override;
 
@@ -81,31 +73,30 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition")
 	TSubclassOf<AJeonwoochiPaperCharacter> Player2DClass;
 
-	/** 보스나 캐릭터의 2D <-> 3D 전환 전,후 위치 설정 */
+	/** 전환 대상 캐릭터의 2D/3D Transform */
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Transition")
 	TArray<F2DTransitionCharacters> TransitionCharacters;
 
-	/** Transition 조건 */
+	/** 3D 복귀 조건 */
 	UPROPERTY(EditAnywhere, Category = "Transition")
 	EComebackCondition CombackCondition = EComebackCondition::KillEnemies;
 
-	/** 활성화 시킬 2D AI 캐릭터 */
-	UPROPERTY(EditInstanceOnly, Category = "Transition", meta = (EditCondition = "CombackCondition == EComebackCondition::KillEnemies"))
+	/** 2D 전환 시 활성화할 AI */
+	UPROPERTY(EditInstanceOnly, Category = "Transition",
+		meta = (EditCondition = "CombackCondition == EComebackCondition::KillEnemies"))
 	TArray<TObjectPtr<APawn>> ActiveTargets;
 
-	/** 도달해야 할 위치 */
-	UPROPERTY(EditAnywhere, Category = "Transition", meta = (EditCondition = "CombackCondition == EComebackCondition::ReachLocation"))
+	/** 도달 조건 판정 위치 */
+	UPROPERTY(EditAnywhere, Category = "Transition",
+		meta = (EditCondition = "CombackCondition == EComebackCondition::ReachLocation"))
 	TObjectPtr<UBoxComponent> ReachLocationBox = nullptr;
 
-	/** Transition시 재생할 VFX */
 	UPROPERTY(EditAnywhere, Category = "Transition|VFX")
 	UNiagaraSystem* NiagaraSystem = nullptr;
 
-	/** Transition시 재생할 VFX */
 	UPROPERTY(EditAnywhere, Category = "Transition|VFX")
 	UParticleSystem* ParticleSystem = nullptr;
 
-	/** false면, 2D 캐릭터에서 스폰함 */
 	UPROPERTY(EditAnywhere, Category = "Transition|VFX")
 	bool bPlayIn3DChar = true;
 
@@ -121,15 +112,15 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Transition|Sound")
 	USoundBase* Transition3DSound = nullptr;
 
+	/** 그림 평면 기준 깊이 오프셋 */
 	UPROPERTY(EditAnywhere, Category = "Transition|Location")
 	float LocalYOffset = 0.f;
 
-
 	UPROPERTY(EditAnywhere, Category = "Break|Asset")
-	TSoftObjectPtr<UGeometryCollection> FractureAsset; // 부서질 Geometry Collection
+	TSoftObjectPtr<UGeometryCollection> FractureAsset;
 
 	UPROPERTY(EditAnywhere, Category = "Break|Tuning")
-	float DestroyDelay = 5.0f;             // 부서지는 연출 후 원본을 없애는 시간
+	float DestroyDelay = 5.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Break|Impulse")
 	float RadialImpulseStrength = 1500.f;
@@ -137,28 +128,21 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Break|Impulse")
 	float RadialImpulseRadius = 200.f;
 
-	// 내부 헬퍼
-	void SpawnFractureActorAndKickSim(class AActor* Owner);
+	void SpawnFractureActorAndKickSim(AActor* Owner);
 
 private:
-	
 	UFUNCTION() void ReduceRemainEnemies(AActor* Char, ECharacterType CharType);
 	UFUNCTION() void ActiveAIs();
-
 	UFUNCTION() void SetReachLocationCollisionEnabled(bool bEnable);
 
-	/* true이면, 2D 진입 Sound, false이면 3D 진입 Sound. 
-	VFX는 2D, 3D 진입 전부 동일.
-	*/
+	/** true: 2D 진입 사운드, false: 3D 복귀 사운드 */
 	UFUNCTION() void PlayVFX(bool bTransition2DSound);
 
-	/** true인 경우 before transform으로 설정. false이면 after transform으로 설정. */
 	UFUNCTION() void SetCharactersTransform(bool bIsBeforeTransform);
 
 	int32 RemainEnemies = 0;
 	int32 RemainConditions = 0;
-	TArray<TObjectPtr<ABaseCharacter>> CachedTargets;
 
-	AJeonwoochiCharacter* CachedChar;
+	AJeonwoochiCharacter* CachedChar = nullptr;
 	AJeonwoochiPaperCharacter* Player2DCharacter = nullptr;
 };

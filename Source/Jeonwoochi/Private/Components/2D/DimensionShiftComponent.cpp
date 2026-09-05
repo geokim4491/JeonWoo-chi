@@ -1,6 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "Components/2D/DimensionShiftComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -27,15 +24,11 @@
 #include "GeometryCollection/GeometryCollectionObject.h"
 
 
-// Sets default values for this component's properties
 UDimensionShiftComponent::UDimensionShiftComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
-
 }
 
-
-// Called when the game starts
 void UDimensionShiftComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -43,7 +36,7 @@ void UDimensionShiftComponent::BeginPlay()
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
 
-	const FTransform OwnerXf = Owner->GetActorTransform();
+	const FTransform PaintingTransform = Owner->GetActorTransform();
 
 	for (APawn* P : ActiveTargets)
 	{
@@ -51,19 +44,22 @@ void UDimensionShiftComponent::BeginPlay()
 
 		if (auto* PAC = Cast<APaperAICharacter>(P))
 		{
-			// PAC의 Death 이벤트 바인딩 -> ReduceRemainEnemies
-			PAC->HealthComponent->OnDeath.AddUObject(this, &UDimensionShiftComponent::ReduceRemainEnemies);
+			PAC->HealthComponent->OnDeath.AddUObject(
+				this, &UDimensionShiftComponent::ReduceRemainEnemies);
 
-			FVector Local = OwnerXf.InverseTransformPosition(PAC->GetActorLocation());
+			FVector Local = PaintingTransform.InverseTransformPosition(PAC->GetActorLocation());
 
-			// 0으로 하면, 그림에 딱 붙어있는 모양이 안되서 LocalOffset으로 조정.
+			// 그림 평면 기준 깊이 오프셋 적용
 			Local.Y = LocalYOffset;
-			
-			// 다시 월드 좌표로 변환 → 스폰 위치 완성
-			FTransform FinalTransform = FTransform(OwnerXf.GetRotation(), OwnerXf.TransformPosition(Local), PAC->GetActorScale());
+
+			// 보정된 로컬 좌표를 월드 좌표로 변환
+			FTransform FinalTransform = FTransform(
+				PaintingTransform.GetRotation(),
+				PaintingTransform.TransformPosition(Local),
+				PAC->GetActorScale());
+
 			PAC->SetActorTransform(FinalTransform);
 
-			
 			RemainEnemies++;
 		}
 	}
@@ -73,13 +69,12 @@ void UDimensionShiftComponent::BeginPlay()
 	case EComebackCondition::All:
 		RemainConditions = 2;
 		break;
+
 	default:
 		RemainConditions = 1;
 		break;
 	}
 
-
-	// 1) 박스 없으면 생성(런타임)
 	if (!ReachLocationBox)
 	{
 		ReachLocationBox = NewObject<UBoxComponent>(Owner, TEXT("ReachLocationBox"));
@@ -134,48 +129,44 @@ void UDimensionShiftComponent::Start2DTransition()
 {
 	if (!GetWorld() || !Player2DClass) return;
 
-	// 2D 캐릭터 스폰
-	if (Player2DClass)
-	{
-		FActorSpawnParameters Params;
-		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-		FRotator SpawnRot = GetOwner()->GetActorRotation();
+	AActor* Owner = GetOwner();
+	if (!Owner || !CachedChar) return;
 
-		AActor* Owner = GetOwner();
-		const FTransform OwnerXf = Owner->GetActorTransform();
+	const FTransform PaintingTransform = Owner->GetActorTransform();
 
-		// 1) 플레이어 위치를 소유 액터의 '로컬' 좌표로 변환
-		FVector Local = OwnerXf.InverseTransformPosition(CachedChar->GetActorLocation());
+	// 플레이어 위치를 그림 액터의 로컬 좌표로 변환
+	FVector Local = PaintingTransform.InverseTransformPosition(CachedChar->GetActorLocation());
 
-		// 2) 0으로 하면, 그림에 딱 붙어있는 모양이 됨.
-		Local.Y = 0.f;
-		Local.Z += 40.f;
+	// 그림 평면 기준 깊이 오프셋 적용
+	Local.Y = LocalYOffset;
+	Local.Z += 40.f;
 
-		// 3) 다시 월드 좌표로 변환 → 스폰 위치 완성
-		FVector SpawnLoc = OwnerXf.TransformPosition(Local);
+	// 보정된 로컬 좌표를 월드 좌표로 변환
+	FVector SpawnLoc = PaintingTransform.TransformPosition(Local);
 
-		Player2DCharacter = GetWorld()->
-			SpawnActor<AJeonwoochiPaperCharacter>(Player2DClass, SpawnLoc, SpawnRot, Params);
+	// 그림 액터의 방향을 기준으로 2D 캐릭터 정렬
+	FRotator SpawnRot = Owner->GetActorRotation();
 
-		if (!Player2DCharacter) return;
-	}
-	
+	Player2DCharacter = GetWorld()->SpawnActor<AJeonwoochiPaperCharacter>(
+		Player2DClass, SpawnLoc, SpawnRot, Params);
+
+	if (!Player2DCharacter) return;
+
 	PlayVFX(true);
 	ActiveAIs();
 
 	CachedChar->SetActorHiddenInGame(true);
-	// CachedChar->GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	// CachedChar->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CachedChar->GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
-	// 2D 캐릭터로 변경
-	if (APlayerController* PC =
-		UGameplayStatics::GetPlayerController(GetWorld(), 0))
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
 	{
 		float BlendTime = 0.5f;
 
-		PC->SetViewTargetWithBlend(Player2DCharacter, /*BlendTime=*/BlendTime);
+		PC->SetViewTargetWithBlend(Player2DCharacter, BlendTime);
+
 		FTimerHandle TH;
 		GetWorld()->GetTimerManager().SetTimer(
 			TH,
@@ -194,22 +185,17 @@ void UDimensionShiftComponent::Start2DTransition()
 void UDimensionShiftComponent::Start3DTransition()
 {
 	if (RemainConditions != 0) return;
-
 	if (!GetWorld() || !CachedChar) return;
 
 	SetCharactersTransform(false);
-
 	PlayVFX(false);
 
 	CachedChar->SetActorHiddenInGame(false);
-	// CachedChar->GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	// CachedChar->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CachedChar->GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 
-	if (APlayerController* PC =
-		UGameplayStatics::GetPlayerController(GetWorld(), 0))
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
 	{
-		PC->SetViewTargetWithBlend(CachedChar, /*BlendTime=*/1.f);
+		PC->SetViewTargetWithBlend(CachedChar, 1.f);
 		PC->Possess(CachedChar);
 	}
 
@@ -218,7 +204,7 @@ void UDimensionShiftComponent::Start3DTransition()
 		Player2DCharacter->Destroy();
 	}
 
-	// Destroy 안한 적 있으면, Destroy
+	// 전환 종료 시 남아 있는 2D AI 정리
 	for (APawn* P : ActiveTargets)
 	{
 		if (!IsValid(P)) continue;
@@ -226,7 +212,7 @@ void UDimensionShiftComponent::Start3DTransition()
 		P->Destroy();
 	}
 
-	OnCompleteComebackCondition.Broadcast(CombackCondition);	
+	OnCompleteComebackCondition.Broadcast(CombackCondition);
 
 	BreakOwnerAndDestroy();
 }
@@ -261,13 +247,11 @@ void UDimensionShiftComponent::OnBoxBeginOverlap(
 	RemainConditions--;
 	Start3DTransition();
 
-	// 한번만 발동하게 설정.
+	// 동일 도달 조건의 중복 처리 방지
 	SetReachLocationCollisionEnabled(false);
 
-	// 재진입 방지.
 	ReachLocationBox->OnComponentBeginOverlap.RemoveDynamic(
 		this, &UDimensionShiftComponent::OnBoxBeginOverlap);
-	
 }
 
 void UDimensionShiftComponent::ActiveAIs()
@@ -275,18 +259,15 @@ void UDimensionShiftComponent::ActiveAIs()
 	for (APawn* P : ActiveTargets)
 	{
 		if (!IsValid(P)) continue;
-
 		if (!Cast<APaperAICharacter>(P)) continue;
 
-		// 이미 컨트롤러가 있으면 옵션에 따라 처리
 		if (AController* Existing = P->GetController())
 		{
-
-			// 강제 재빙의(=OnPossess 재호출)
 			if (AAIController2D* AIC = Cast<AAIController2D>(Existing))
 			{
+				// 재빙의하여 OnPossess 기반 초기화 재실행
 				AIC->UnPossess();
-				AIC->Possess(P);         // 여기서 OnPossess 자동 호출
+				AIC->Possess(P);
 
 				AIC->SetTargetActor(Player2DCharacter);
 
@@ -297,15 +278,14 @@ void UDimensionShiftComponent::ActiveAIs()
 			}
 			else
 			{
-				// AIController가 아닌 경우 안전하게 떼어내고 새 컨트롤러 스폰
 				P->DetachFromControllerPendingDestroy();
-				P->SpawnDefaultController(); // 여기서 OnPossess 자동 호출
+				P->SpawnDefaultController();
 			}
+
 			continue;
 		}
 
-		// 핵심: Pawn의 AIControllerClass 기준으로 컨트롤러 스폰 + 자동 Possess
-		P->SpawnDefaultController(); // OnPossess 자동 호출
+		P->SpawnDefaultController();
 	}
 }
 
@@ -320,13 +300,15 @@ void UDimensionShiftComponent::PlayVFX(bool bTransition2DSound)
 
 		if (NiagaraSystem)
 			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				World, NiagaraSystem, CachedChar->GetActorLocation() + VFXAddLocation, CachedChar->GetActorRotation(), VFXScale
-			);
+				World, NiagaraSystem,
+				CachedChar->GetActorLocation() + VFXAddLocation,
+				CachedChar->GetActorRotation(), VFXScale);
 
 		if (ParticleSystem)
 			UGameplayStatics::SpawnEmitterAtLocation(
-				World, ParticleSystem, CachedChar->GetActorLocation() + VFXAddLocation, CachedChar->GetActorRotation(), VFXScale
-			);
+				World, ParticleSystem,
+				CachedChar->GetActorLocation() + VFXAddLocation,
+				CachedChar->GetActorRotation(), VFXScale);
 	}
 	else
 	{
@@ -334,22 +316,26 @@ void UDimensionShiftComponent::PlayVFX(bool bTransition2DSound)
 
 		if (NiagaraSystem)
 			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				World, NiagaraSystem, Player2DCharacter->GetActorLocation() + VFXAddLocation, Player2DCharacter->GetActorRotation(), VFXScale
-			);
+				World, NiagaraSystem,
+				Player2DCharacter->GetActorLocation() + VFXAddLocation,
+				Player2DCharacter->GetActorRotation(), VFXScale);
 
 		if (ParticleSystem)
 			UGameplayStatics::SpawnEmitterAtLocation(
-				World, ParticleSystem, Player2DCharacter->GetActorLocation() + VFXAddLocation, Player2DCharacter->GetActorRotation(), VFXScale
-			);
+				World, ParticleSystem,
+				Player2DCharacter->GetActorLocation() + VFXAddLocation,
+				Player2DCharacter->GetActorRotation(), VFXScale);
 	}
 
 	if (bTransition2DSound)
 	{
-		if (Transition2DSound) UGameplayStatics::PlaySound2D(World, Transition2DSound);
+		if (Transition2DSound)
+			UGameplayStatics::PlaySound2D(World, Transition2DSound);
 	}
 	else
 	{
-		if (Transition3DSound) UGameplayStatics::PlaySound2D(World, Transition3DSound);
+		if (Transition3DSound)
+			UGameplayStatics::PlaySound2D(World, Transition3DSound);
 	}
 }
 
@@ -379,12 +365,12 @@ void UDimensionShiftComponent::BreakOwnerAndDestroy()
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
 
-	// 1) 부서지는 액터 스폰 + 물리 시작
 	SpawnFractureActorAndKickSim(Owner);
 
-	// 2) 원본은 보이지 않게/충돌 끄기 (바로 Destroy하지 말 것!)
+	// 파괴 연출 동안 원본 Actor 비활성화
 	Owner->SetActorHiddenInGame(true);
 	Owner->SetActorEnableCollision(false);
+
 	if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(Owner->GetRootComponent()))
 	{
 		RootPrim->SetGenerateOverlapEvents(false);
@@ -392,7 +378,6 @@ void UDimensionShiftComponent::BreakOwnerAndDestroy()
 		RootPrim->SetSimulatePhysics(false);
 	}
 
-	// 3) 연출이 어느 정도 진행된 뒤 원본 삭제
 	FTimerHandle H;
 	GetWorld()->GetTimerManager().SetTimer(
 		H,
@@ -404,7 +389,7 @@ void UDimensionShiftComponent::BreakOwnerAndDestroy()
 				}
 			}),
 		DestroyDelay,
-		/*bLoop=*/false
+		false
 	);
 }
 
@@ -412,20 +397,21 @@ void UDimensionShiftComponent::SpawnFractureActorAndKickSim(AActor* Owner)
 {
 	if (!Owner || !GetWorld()) return;
 
-	// 에셋 동기 로드(필요 시)
-	UGeometryCollection* Asset = FractureAsset.IsValid() ? FractureAsset.Get() : FractureAsset.LoadSynchronous();
+	UGeometryCollection* Asset =
+		FractureAsset.IsValid() ? FractureAsset.Get() : FractureAsset.LoadSynchronous();
+
 	if (!Asset) return;
 
 	const FTransform Xf = Owner->GetActorTransform();
 
-	// 원본의 현재 속도를 이어받아 자연스럽게 날리기 위함(선택)
+	// 파괴 조각에 원본 Actor의 속도 전달
 	FVector InheritLinVel = FVector::ZeroVector;
+
 	if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(Owner->GetRootComponent()))
 	{
 		InheritLinVel = RootPrim->GetComponentVelocity();
 	}
 
-	// 1) GeometryCollection 액터 스폰
 	FActorSpawnParameters SP;
 	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -439,41 +425,32 @@ void UDimensionShiftComponent::SpawnFractureActorAndKickSim(AActor* Owner)
 	UGeometryCollectionComponent* GCC = GCA->GetGeometryCollectionComponent();
 	if (!GCC) return;
 
-	// 2) 에셋 지정 + 물리/충돌 설정
 	GCC->SetRestCollection(Asset);
 	GCC->SetMobility(EComponentMobility::Movable);
 	GCC->SetSimulatePhysics(true);
 	GCC->SetEnableGravity(true);
-
 	GCC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
-
-	// 초기 속도 부여(선택)
 	GCC->SetPhysicsLinearVelocity(InheritLinVel);
 
-	// 3) 산산조각 나가게 임펄스(간단 버전): AddRadialImpulse 사용
 	GCC->AddRadialImpulse(
 		Xf.GetLocation(),
 		RadialImpulseRadius,
 		RadialImpulseStrength,
 		ERadialImpulseFalloff::RIF_Linear,
-		/*bVelChange=*/true
+		true
 	);
-
-	// 참고: 더 정교한 파괴는 Field System으로 "Strain" 필드/브레이킹 필드 적용을 고려
-	// (RadialFalloff + CullingField 등)
 }
 
 void UDimensionShiftComponent::EndPlay(EEndPlayReason::Type EndplayReason)
 {
-
 	if (ReachLocationBox)
 	{
 		ReachLocationBox->OnComponentBeginOverlap.RemoveDynamic(
 			this, &UDimensionShiftComponent::OnBoxBeginOverlap);
-		// 원한다면 종료 시 완전히 비활성화
+
 		SetReachLocationCollisionEnabled(false);
 	}
-	
+
 	Super::EndPlay(EndplayReason);
 }
