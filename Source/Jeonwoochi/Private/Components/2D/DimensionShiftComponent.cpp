@@ -138,14 +138,16 @@ void UDimensionShiftComponent::Start2DTransition()
 	const FTransform PaintingTransform = Owner->GetActorTransform();
 
 	// 플레이어 위치를 그림 액터의 로컬 좌표로 변환
-	FVector Local = PaintingTransform.InverseTransformPosition(CachedChar->GetActorLocation());
+	FVector Local = 
+		PaintingTransform.InverseTransformPosition(CachedChar->GetActorLocation());
 
 	// 그림 평면 기준 깊이 오프셋 적용
 	Local.Y = LocalYOffset;
 	Local.Z += 40.f;
 
 	// 보정된 로컬 좌표를 월드 좌표로 변환
-	FVector SpawnLoc = PaintingTransform.TransformPosition(Local);
+	FVector SpawnLoc = 
+		PaintingTransform.TransformPosition(Local);
 
 	// 그림 액터의 방향을 기준으로 2D 캐릭터 정렬
 	FRotator SpawnRot = Owner->GetActorRotation();

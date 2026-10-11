@@ -18,264 +18,224 @@ ACloneAICharacter::ACloneAICharacter()
 }
 
 
+
+
 void ACloneAICharacter::CopyAppearanceFrom(ACharacter* Source)
 {
-	if (!Source)
-	{
-		return;
-	}
+    if (!Source)
+        return;
 
-	USkeletalMeshComponent* SrcMain = Source->GetMesh();
-	USkeletalMeshComponent* CloneBodyMesh = GetMesh();
+    USkeletalMeshComponent* SrcMain = Source->GetMesh();
+    USkeletalMeshComponent* CloneBodyMesh = GetMesh();
 
-	if (!SrcMain || !CloneBodyMesh)
-	{
-		return;
-	}
+    if (!SrcMain || !CloneBodyMesh)
+        return;
 
-	// 1. 메인 Skeletal Mesh 복제
-	CloneBodyMesh->SetSkeletalMeshAsset(SrcMain->GetSkeletalMeshAsset());
+    // 1. 메인 Skeletal Mesh 복제
+    CloneBodyMesh->SetSkeletalMeshAsset(
+        SrcMain->GetSkeletalMeshAsset());
 
-	for (int32 MaterialIndex = 0;
-		MaterialIndex < SrcMain->GetNumMaterials();
-		++MaterialIndex)
-	{
-		CloneBodyMesh->SetMaterial(
-			MaterialIndex,
-			SrcMain->GetMaterial(MaterialIndex));
-	}
+    for (int32 i = 0; i < SrcMain->GetNumMaterials(); ++i)
+    {
+        CloneBodyMesh->SetMaterial(
+            i, SrcMain->GetMaterial(i));
+    }
 
-	// 2. Sub Skeletal Mesh 생성
-	TInlineComponentArray<USkeletalMeshComponent*> SrcSkels;
-	Source->GetComponents(SrcSkels);
+    // 2. Sub Skeletal Mesh 생성 및 부착
+    TInlineComponentArray<USkeletalMeshComponent*> SrcSkels;
+    Source->GetComponents(SrcSkels);
 
-	TMap<USkeletalMeshComponent*, USkeletalMeshComponent*> SkelMap;
-	SkelMap.Add(SrcMain, CloneBodyMesh);
+    using FSkelPair = TPair<
+        USkeletalMeshComponent*,
+        USkeletalMeshComponent*
+    >;
 
-	for (USkeletalMeshComponent* SrcSkel : SrcSkels)
-	{
-		if (!SrcSkel || SrcSkel == SrcMain)
-		{
-			continue;
-		}
+    TArray<FSkelPair> SkelPairs;
+    SkelPairs.Reserve(SrcSkels.Num());
+    SkelPairs.Emplace(SrcMain, CloneBodyMesh);
 
-		const FName CloneName(
-			*FString::Printf(TEXT("%s_Clone"), *SrcSkel->GetName()));
+    for (USkeletalMeshComponent* SrcSkel : SrcSkels)
+    {
+        if (!SrcSkel || SrcSkel == SrcMain)
+            continue;
 
-		USkeletalMeshComponent* CloneSkel =
-			NewObject<USkeletalMeshComponent>(
-				this,
-				USkeletalMeshComponent::StaticClass(),
-				CloneName);
+        const FName CloneName(
+            *FString::Printf(
+                TEXT("%s_Clone"), *SrcSkel->GetName()));
 
-		if (!CloneSkel)
-		{
-			continue;
-		}
+        USkeletalMeshComponent* CloneSkel =
+            NewObject<USkeletalMeshComponent>(
+                this,
+                USkeletalMeshComponent::StaticClass(),
+                CloneName);
 
-		CloneSkel->SetSkeletalMeshAsset(
-			SrcSkel->GetSkeletalMeshAsset());
+        if (!CloneSkel)
+            continue;
 
-		for (int32 MaterialIndex = 0;
-			MaterialIndex < SrcSkel->GetNumMaterials();
-			++MaterialIndex)
-		{
-			CloneSkel->SetMaterial(
-				MaterialIndex,
-				SrcSkel->GetMaterial(MaterialIndex));
-		}
+        CloneSkel->SetSkeletalMeshAsset(
+            SrcSkel->GetSkeletalMeshAsset());
 
-		CloneSkel->SetRelativeTransform(
-			SrcSkel->GetRelativeTransform());
+        for (int32 i = 0; i < SrcSkel->GetNumMaterials(); ++i)
+        {
+            CloneSkel->SetMaterial(
+                i, SrcSkel->GetMaterial(i));
+        }
 
-		CloneSkel->SetupAttachment(GetRootComponent());
-		CloneSkel->RegisterComponent();
+        // 모든 Sub Skeletal Mesh는 메인 메시 직속이라고 가정
+        CloneSkel->SetupAttachment(
+            CloneBodyMesh,
+            SrcSkel->GetAttachSocketName());
 
-		SkelMap.Add(SrcSkel, CloneSkel);
-	}
+        CloneSkel->SetRelativeTransform(
+            SrcSkel->GetRelativeTransform());
 
-	// 원본 Component의 부모 관계를 복제본에 대응시킴
-	auto ResolveCloneParent =
-		[&](USceneComponent* SrcParent) -> USceneComponent*
-		{
-			if (USkeletalMeshComponent* SrcParentSkel =
-				Cast<USkeletalMeshComponent>(SrcParent))
-			{
-				if (USkeletalMeshComponent** Found =
-					SkelMap.Find(SrcParentSkel))
-				{
-					return *Found;
-				}
-			}
+        CloneSkel->RegisterComponent();
 
-			return CloneBodyMesh;
-		};
+        // Groom / 무기 부모 탐색에 사용할 매핑
+        SkelPairs.Emplace(SrcSkel, CloneSkel);
+    }
 
-	// 3. 원본과 같은 부모 / Socket으로 재부착
-	for (const auto& Pair : SkelMap)
-	{
-		USkeletalMeshComponent* SrcSkel = Pair.Key;
-		USkeletalMeshComponent* CloneSkel = Pair.Value;
+    // 3. 원본 부모에 대응하는 복제 부모 탐색
+    auto ResolveCloneParent =
+        [&](USceneComponent* SrcParent) -> USceneComponent*
+        {
+            for (const FSkelPair& Pair : SkelPairs)
+            {
+                if (Pair.Key == SrcParent)
+                    return Pair.Value;
+            }
 
-		if (!CloneSkel || CloneSkel == CloneBodyMesh)
-		{
-			continue;
-		}
+            return CloneBodyMesh;
+        };
 
-		USceneComponent* CloneParent =
-			ResolveCloneParent(SrcSkel->GetAttachParent());
+    // 4. Skeleton에 따른 Pose 동기화
+    const USkeleton* MainSkeleton =
+        CloneBodyMesh->GetSkeletalMeshAsset()
+        ? CloneBodyMesh->GetSkeletalMeshAsset()->GetSkeleton()
+        : nullptr;
 
-		CloneSkel->DetachFromComponent(
-			FDetachmentTransformRules::KeepRelativeTransform);
+    for (const FSkelPair& Pair : SkelPairs)
+    {
+        USkeletalMeshComponent* CloneSkel = Pair.Value;
 
-		CloneSkel->AttachToComponent(
-			CloneParent,
-			FAttachmentTransformRules::KeepRelativeTransform,
-			SrcSkel->GetAttachSocketName());
-	}
+        if (CloneSkel == CloneBodyMesh)
+            continue;
 
-	// 4. Skeleton 구조에 따라 Pose 동기화 방식 분기
-	const USkeleton* MainSkeleton =
-		CloneBodyMesh->GetSkeletalMeshAsset()
-		? CloneBodyMesh->GetSkeletalMeshAsset()->GetSkeleton()
-		: nullptr;
+        const USkeleton* FollowerSkeleton =
+            CloneSkel->GetSkeletalMeshAsset()
+            ? CloneSkel->GetSkeletalMeshAsset()->GetSkeleton()
+            : nullptr;
 
-	for (const auto& Pair : SkelMap)
-	{
-		USkeletalMeshComponent* CloneSkel = Pair.Value;
+        const bool bSameSkeleton =
+            MainSkeleton &&
+            FollowerSkeleton &&
+            MainSkeleton == FollowerSkeleton;
 
-		if (!CloneSkel || CloneSkel == CloneBodyMesh)
-		{
-			continue;
-		}
+        if (bSameSkeleton)
+        {
+            CloneSkel->SetLeaderPoseComponent(CloneBodyMesh);
+            CloneSkel->bUseBoundsFromLeaderPoseComponent = true;
+        }
+        else if (ClothRetargetABP)
+        {
+            CloneSkel->SetAnimationMode(
+                EAnimationMode::AnimationBlueprint);
 
-		const USkeleton* FollowerSkeleton =
-			CloneSkel->GetSkeletalMeshAsset()
-			? CloneSkel->GetSkeletalMeshAsset()->GetSkeleton()
-			: nullptr;
+            CloneSkel->SetAnimInstanceClass(
+                ClothRetargetABP);
+        }
+    }
 
-		const bool bSameSkeleton =
-			MainSkeleton &&
-			FollowerSkeleton &&
-			MainSkeleton == FollowerSkeleton;
+    // 5. Groom 복제
+    TInlineComponentArray<UGroomComponent*> SrcGrooms;
+    Source->GetComponents(SrcGrooms);
 
-		if (bSameSkeleton)
-		{
-			CloneSkel->SetLeaderPoseComponent(CloneBodyMesh);
-			CloneSkel->bUseBoundsFromLeaderPoseComponent = true;
-		}
-		else if (ClothRetargetABP)
-		{
-			CloneSkel->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-			CloneSkel->SetAnimInstanceClass(ClothRetargetABP);
-		}
+    for (UGroomComponent* SrcGroom : SrcGrooms)
+    {
+        if (!SrcGroom)
+            continue;
 
-	}
+        const FName CloneName(
+            *FString::Printf(
+                TEXT("%s_Clone"), *SrcGroom->GetName()));
 
-	// 5. Groom 복제
-	TInlineComponentArray<UGroomComponent*> SrcGrooms;
-	Source->GetComponents(SrcGrooms);
+        UGroomComponent* CloneGroom =
+            DuplicateObject<UGroomComponent>(
+                SrcGroom,
+                this,
+                CloneName);
 
-	for (UGroomComponent* SrcGroom : SrcGrooms)
-	{
-		if (!SrcGroom)
-		{
-			continue;
-		}
+        if (!CloneGroom)
+            continue;
 
-		const FName CloneName(
-			*FString::Printf(
-				TEXT("%s_Clone"),
-				*SrcGroom->GetName()));
+        USceneComponent* CloneParent =
+            ResolveCloneParent(
+                SrcGroom->GetAttachParent());
 
-		UGroomComponent* CloneGroom =
-			DuplicateObject<UGroomComponent>(
-				SrcGroom,
-				this,
-				CloneName);
+        CloneGroom->AttachToComponent(
+            CloneParent,
+            FAttachmentTransformRules::KeepRelativeTransform,
+            SrcGroom->GetAttachSocketName());
 
-		if (!CloneGroom)
-		{
-			continue;
-		}
+        CloneGroom->RegisterComponent();
+    }
 
-		USceneComponent* CloneParent =
-			ResolveCloneParent(
-				SrcGroom->GetAttachParent());
+    // 6. ChildActorComponent 복제
+    TInlineComponentArray<UChildActorComponent*> SrcChildActors;
+    Source->GetComponents(SrcChildActors);
 
-		CloneGroom->AttachToComponent(
-			CloneParent,
-			FAttachmentTransformRules::KeepRelativeTransform,
-			SrcGroom->GetAttachSocketName());
+    for (UChildActorComponent* SrcChildActor : SrcChildActors)
+    {
+        if (!SrcChildActor)
+            continue;
 
-		CloneGroom->RegisterComponent();
-	}
+        const FName CloneName(
+            *FString::Printf(
+                TEXT("%s_Clone"), *SrcChildActor->GetName()));
 
-	// 6. ChildActorComponent 복제
-	TInlineComponentArray<UChildActorComponent*> SrcChildActors;
-	Source->GetComponents(SrcChildActors);
+        UChildActorComponent* CloneChildActor =
+            NewObject<UChildActorComponent>(
+                this,
+                UChildActorComponent::StaticClass(),
+                CloneName);
 
-	for (UChildActorComponent* SrcChildActor : SrcChildActors)
-	{
-		if (!SrcChildActor)
-		{
-			continue;
-		}
+        if (!CloneChildActor)
+            continue;
 
-		const FName CloneName(
-			*FString::Printf(
-				TEXT("%s_Clone"),
-				*SrcChildActor->GetName()));
+        CloneChildActor->SetChildActorClass(
+            SrcChildActor->GetChildActorClass());
 
-		UChildActorComponent* CloneChildActor =
-			NewObject<UChildActorComponent>(
-				this,
-				UChildActorComponent::StaticClass(),
-				CloneName);
+        CloneChildActor->SetRelativeTransform(
+            SrcChildActor->GetRelativeTransform());
 
-		if (!CloneChildActor)
-		{
-			continue;
-		}
+        USceneComponent* CloneParent =
+            ResolveCloneParent(
+                SrcChildActor->GetAttachParent());
 
-		CloneChildActor->SetChildActorClass(
-			SrcChildActor->GetChildActorClass());
+        CloneChildActor->SetupAttachment(
+            CloneParent,
+            SrcChildActor->GetAttachSocketName());
 
-		CloneChildActor->SetRelativeTransform(
-			SrcChildActor->GetRelativeTransform());
+        CloneChildActor->RegisterComponent();
+        CloneChildActor->CreateChildActor();
 
-		USceneComponent* CloneParent =
-			ResolveCloneParent(
-				SrcChildActor->GetAttachParent());
+        AActor* DestChild = CloneChildActor->GetChildActor();
 
-		CloneChildActor->AttachToComponent(
-			CloneParent,
-			FAttachmentTransformRules::KeepRelativeTransform,
-			SrcChildActor->GetAttachSocketName());
+        if (!DestChild)
+            continue;
 
-		CloneChildActor->RegisterComponent();
-		CloneChildActor->CreateChildActor();
+        DestChild->SetOwner(this);
 
-		AActor* DestChild =
-			CloneChildActor->GetChildActor();
+        TArray<UHitDetectionComponent*> HitDetectionComponents;
+        DestChild->GetComponents(HitDetectionComponents);
 
-		if (!DestChild)
-		{
-			continue;
-		}
-
-		DestChild->SetOwner(this);
-
-		TArray<UHitDetectionComponent*> HitDetectionComponents;
-		DestChild->GetComponents(HitDetectionComponents);
-
-		for (UHitDetectionComponent* HitDetection :
-			HitDetectionComponents)
-		{
-			if (HitDetection)
-			{
-				HitDetection->RefreshOwnerPointers();
-			}
-		}
-	}
+        for (UHitDetectionComponent* HitDetection :
+            HitDetectionComponents)
+        {
+            if (HitDetection)
+            {
+                HitDetection->RefreshOwnerPointers();
+            }
+        }
+    }
 }

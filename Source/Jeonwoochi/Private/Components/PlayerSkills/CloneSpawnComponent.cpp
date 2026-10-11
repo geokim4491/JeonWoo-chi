@@ -93,11 +93,6 @@ void UCloneSpawnComponent::InternalSpawn(const FVector& Loc)
         Clone->CopyAppearanceFrom(SourceChar);
     }
 
-    if (UAttackComponent* AC = Clone->FindComponentByClass<UAttackComponent>())
-    {
-        AC->SetAnimInstance(Clone->GetMesh()->GetAnimInstance());  // <- 캐시 갱신
-    }
-
     UGameplayStatics::FinishSpawningActor(Clone, SpawnTransform);
     
     Clone->illusioned(CloneDuration);

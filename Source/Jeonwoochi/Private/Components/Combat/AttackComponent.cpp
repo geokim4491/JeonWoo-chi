@@ -26,20 +26,13 @@ void UAttackComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (CachedChar) 
-	{
-		AnimInst = CachedChar->GetMesh()->GetAnimInstance();
-		CachedMove = CachedChar->GetCharacterMovement();
+	CachedChar = Cast<ABaseCharacter>(GetOwner());
+	if (!CachedChar)
+		return;
 
-		if (AnimInst) 
-		{
-			// 멀티캐스트 델리게이트에 한 번만 연결
-			AnimInst->OnMontageBlendingOut.AddDynamic(
-				this, &UAttackComponent::OnMontageBlendOut);
-			AnimInst->OnMontageEnded.AddDynamic(
-				this, &UAttackComponent::OnMontageBlendOut);
-		}
-	}
+	CachedMove = CachedChar->GetCharacterMovement();
+
+	EnsureAnimDelegates(CachedChar);
 	
 }
 
