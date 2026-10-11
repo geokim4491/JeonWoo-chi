@@ -51,6 +51,9 @@ protected:
 	/** 쿨다운 종료 시 호출 */
 	void ResetSpawnAbility();
 
+	// 개별 분신 생성 성공 여부 (스킬 쿨다운과 무관)
+	bool TrySpawnClone(const FVector& Loc);
+
 	void PlayEffect(EEffectType EffectType, FVector Location, FRotator Rotation);
 
 	// 현재 활성 분신

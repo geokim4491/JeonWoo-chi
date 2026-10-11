@@ -40,15 +40,27 @@ bool UCloneSpawnComponent::SpawnClones(const TArray<FVector>& SpawnLocations)
         return false;
     }
 
-    // 배치 스폰
+    UWorld* World = GetWorld();
+    if (!World || SpawnLocations.IsEmpty())
+        return false;
+
+    // 실제 생성된 분신이 있을 때만 스킬 성공으로 처리
+    int32 SpawnedCount = 0;
     for (const FVector& Loc : SpawnLocations)
     {
-        InternalSpawn(Loc);
+        if (TrySpawnClone(Loc))
+            ++SpawnedCount;
     }
 
-    // 소환 후 쿨다운 시작
+    if (SpawnedCount == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SpawnClones: No clones were spawned."));
+        return false;
+    }
+
+    // 쿨다운 타이머는 소환 요청당 한 번만 설정
     bCanSpawn = false;
-    GetWorld()->GetTimerManager().SetTimer(
+    World->GetTimerManager().SetTimer(
         SpawnCooldownTimerHandle,
         this,
         &UCloneSpawnComponent::ResetSpawnAbility,
@@ -59,54 +71,43 @@ bool UCloneSpawnComponent::SpawnClones(const TArray<FVector>& SpawnLocations)
     return true;
 }
 
+// Blueprint에서 직접 호출해도 같은 쿨다운/성공 판정을 적용
 void UCloneSpawnComponent::InternalSpawn(const FVector& Loc)
 {
-    UE_LOG(LogTemp, Display, TEXT("Spawn"));
+    TArray<FVector> Locations;
+    Locations.Add(Loc);
+    SpawnClones(Locations);
+}
 
-    if (!CloneClass) return;
+bool UCloneSpawnComponent::TrySpawnClone(const FVector& Loc)
+{
     UWorld* World = GetWorld();
-    AActor* Owner = GetOwner();
-    if (!World || !Owner) return;
+    ACharacter* SourceChar = Cast<ACharacter>(GetOwner());
+    if (!CloneClass || !World || !SourceChar)
+        return false;
 
-    FRotator Rot = Owner->GetActorRotation();
-    FActorSpawnParameters Params;
-    Params.Owner = Owner;
-    Params.Instigator = Cast<APawn>(Owner);
-
-    // 2) Deferred Spawn
-    FTransform SpawnTransform(Owner->GetActorRotation(), Loc);
-    // SpawnActorDeferred로 인스턴스만 만들고 초기화는 FinishSpawningActor에서
+    const FTransform SpawnTransform(SourceChar->GetActorRotation(), Loc);
     ACloneAICharacter* Clone = World->SpawnActorDeferred<ACloneAICharacter>(
         CloneClass,
         SpawnTransform,
-        Owner,
-        Cast<APawn>(Owner),
+        SourceChar,
+        SourceChar,
         ESpawnActorCollisionHandlingMethod::AlwaysSpawn
     );
 
-    if (!Clone) return;
+    if (!IsValid(Clone))
+        return false;
 
-    // 외형 복사
-    if (ACharacter* SourceChar = Cast<ACharacter>(Owner))
-    {
-        // 1) 메쉬·머티리얼·ChildActor 복사
-        Clone->CopyAppearanceFrom(SourceChar);
-    }
-
+    Clone->CopyAppearanceFrom(SourceChar);
     UGameplayStatics::FinishSpawningActor(Clone, SpawnTransform);
-    
+
+    // Construction Script 등에서 분신이 무효화된 경우 실패 처리
+    if (!IsValid(Clone))
+        return false;
+
     Clone->illusioned(CloneDuration);
-
     ActiveClones.Add(Clone);
-
-    bCanSpawn = false;
-    World->GetTimerManager().SetTimer(
-        SpawnCooldownTimerHandle,
-        this,
-        &UCloneSpawnComponent::ResetSpawnAbility,
-        CloneDuration,
-        false
-    );
+    return true;
 }
 
 void UCloneSpawnComponent::ResetSpawnAbility()
