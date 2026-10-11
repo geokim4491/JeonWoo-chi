@@ -505,7 +505,7 @@ void AJeonwoochiCharacter::OnSpawnClone(const FInputActionValue& Value)
 	if (SkillComp->CloneChiConsumption > ChiComp->GetCurrentChi())
 	{
 		UGameplayStatics::PlaySound2D(GetWorld(), SkillFailSound);
-			return;
+		return;
 	}
 
 	if (SkillComp->CloneSpawnComp->SpawnClones(Points))
