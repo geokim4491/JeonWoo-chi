@@ -106,7 +106,6 @@ bool UCloneSpawnComponent::TrySpawnClone(const FVector& Loc)
         return false;
 
     Clone->illusioned(CloneDuration);
-    ActiveClones.Add(Clone);
     return true;
 }
 

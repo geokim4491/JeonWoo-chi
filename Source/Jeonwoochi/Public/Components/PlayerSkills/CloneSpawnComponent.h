@@ -56,10 +56,6 @@ protected:
 
 	void PlayEffect(EEffectType EffectType, FVector Location, FRotator Rotation);
 
-	// 현재 활성 분신
-	UPROPERTY()
-
-	TArray<ACloneAICharacter*> ActiveClones;
 
 
 };
