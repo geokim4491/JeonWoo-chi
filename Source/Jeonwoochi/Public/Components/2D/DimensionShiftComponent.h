@@ -83,12 +83,12 @@ protected:
 
 	/** 2D 전환 시 활성화할 AI */
 	UPROPERTY(EditInstanceOnly, Category = "Transition",
-		meta = (EditCondition = "CombackCondition == EComebackCondition::KillEnemies"))
+		meta = (EditCondition = "CombackCondition != EComebackCondition::ReachLocation"))
 	TArray<TObjectPtr<APawn>> ActiveTargets;
 
 	/** 도달 조건 판정 위치 */
 	UPROPERTY(EditAnywhere, Category = "Transition",
-		meta = (EditCondition = "CombackCondition == EComebackCondition::ReachLocation"))
+		meta = (EditCondition = "CombackCondition != EComebackCondition::KillEnemies"))
 	TObjectPtr<UBoxComponent> ReachLocationBox = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Transition|VFX")
@@ -142,6 +142,9 @@ private:
 
 	int32 RemainEnemies = 0;
 	int32 RemainConditions = 0;
+	bool bEnemiesConditionCompleted = false;
+	bool bLocationConditionCompleted = false;
+	bool bReturnTransitionStarted = false;
 
 	AJeonwoochiCharacter* CachedChar = nullptr;
 	AJeonwoochiPaperCharacter* Player2DCharacter = nullptr;

@@ -38,14 +38,26 @@ void UDimensionShiftComponent::BeginPlay()
 
 	const FTransform PaintingTransform = Owner->GetActorTransform();
 
+	RemainEnemies = 0;
+	bEnemiesConditionCompleted = false;
+	bLocationConditionCompleted = false;
+	bReturnTransitionStarted = false;
+
+	const bool bNeedEnemies = CombackCondition != EComebackCondition::ReachLocation;
+	const bool bNeedLocation = CombackCondition != EComebackCondition::KillEnemies;
+
 	for (APawn* P : ActiveTargets)
 	{
 		if (!IsValid(P)) continue;
 
 		if (auto* PAC = Cast<APaperAICharacter>(P))
 		{
-			PAC->HealthComponent->OnDeath.AddUObject(
-				this, &UDimensionShiftComponent::ReduceRemainEnemies);
+			if (bNeedEnemies)
+			{
+				PAC->HealthComponent->OnDeath.AddUObject(
+					this, &UDimensionShiftComponent::ReduceRemainEnemies);
+				++RemainEnemies;
+			}
 
 			FVector Local = PaintingTransform.InverseTransformPosition(PAC->GetActorLocation());
 
@@ -59,21 +71,11 @@ void UDimensionShiftComponent::BeginPlay()
 				PAC->GetActorScale());
 
 			PAC->SetActorTransform(FinalTransform);
-
-			RemainEnemies++;
 		}
 	}
 
-	switch (CombackCondition)
-	{
-	case EComebackCondition::All:
-		RemainConditions = 2;
-		break;
-
-	default:
-		RemainConditions = 1;
-		break;
-	}
+	// All 모드에서는 적 처치와 목표 지점 도달을 모두 완료해야 한다.
+	RemainConditions = static_cast<int32>(bNeedEnemies) + static_cast<int32>(bNeedLocation);
 
 	if (!ReachLocationBox)
 	{
@@ -88,17 +90,14 @@ void UDimensionShiftComponent::BeginPlay()
 		ReachLocationBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 
-	if (CombackCondition == EComebackCondition::ReachLocation)
+	if (bNeedLocation)
 	{
 		ReachLocationBox->OnComponentBeginOverlap.AddUniqueDynamic(
 			this, &UDimensionShiftComponent::OnBoxBeginOverlap);
+	}
 
-		SetReachLocationCollisionEnabled(true);
-	}
-	else
-	{
-		SetReachLocationCollisionEnabled(false);
-	}
+	// 2D 캐릭터가 Possess된 이후부터 도달 조건을 판정한다.
+	SetReachLocationCollisionEnabled(false);
 
 	for (F2DTransitionCharacters TransitionCharacter : TransitionCharacters)
 	{
@@ -114,13 +113,16 @@ void UDimensionShiftComponent::BeginPlay()
 
 void UDimensionShiftComponent::ReduceRemainEnemies(AActor* Char, ECharacterType CharType)
 {
-	RemainEnemies = FMath::Max<int32>(0, RemainEnemies - 1);
-
 	if (Char) Char->Destroy();
+
+	if (bEnemiesConditionCompleted || RemainEnemies <= 0) return;
+
+	--RemainEnemies;
 
 	if (RemainEnemies == 0)
 	{
-		RemainConditions--;
+		bEnemiesConditionCompleted = true;
+		RemainConditions = FMath::Max(0, RemainConditions - 1);
 		Start3DTransition();
 	}
 }
@@ -174,9 +176,27 @@ void UDimensionShiftComponent::Start2DTransition()
 			TH,
 			FTimerDelegate::CreateWeakLambda(this, [this, PC]()
 				{
+					if (!IsValid(PC) || !IsValid(Player2DCharacter)) return;
+
 					PC->Possess(Player2DCharacter);
 					Player2DCharacter->ApplyIMC();
 					SetCharactersTransform(true);
+
+					// 처치할 대상이 없으면 적 처치 조건은 이미 충족된 상태다.
+					if (CombackCondition != EComebackCondition::ReachLocation
+						&& RemainEnemies == 0 && !bEnemiesConditionCompleted)
+					{
+						bEnemiesConditionCompleted = true;
+						RemainConditions = FMath::Max(0, RemainConditions - 1);
+					}
+
+					if (CombackCondition != EComebackCondition::KillEnemies)
+					{
+						SetReachLocationCollisionEnabled(true);
+					}
+
+					// 2D Possess 전에 조건이 충족된 경우도 복귀를 판정한다.
+					Start3DTransition();
 				}),
 			BlendTime,
 			false
@@ -186,8 +206,12 @@ void UDimensionShiftComponent::Start2DTransition()
 
 void UDimensionShiftComponent::Start3DTransition()
 {
-	if (RemainConditions != 0) return;
-	if (!GetWorld() || !CachedChar) return;
+	if (RemainConditions != 0 || bReturnTransitionStarted) return;
+	if (!GetWorld() || !IsValid(CachedChar) || !IsValid(Player2DCharacter)
+		|| !Player2DCharacter->IsPlayerControlled()) return;
+
+	bReturnTransitionStarted = true;
+	SetReachLocationCollisionEnabled(false);
 
 	SetCharactersTransform(false);
 	PlayVFX(false);
@@ -197,8 +221,8 @@ void UDimensionShiftComponent::Start3DTransition()
 
 	if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
 	{
-		PC->SetViewTargetWithBlend(CachedChar, 1.f);
 		PC->Possess(CachedChar);
+		PC->SetViewTarget(CachedChar);
 	}
 
 	if (Player2DCharacter)
@@ -242,18 +266,17 @@ void UDimensionShiftComponent::OnBoxBeginOverlap(
 	const FHitResult& SweepResult)
 {
 	APawn* OverlapPawn = Cast<APawn>(OtherActor);
-	if (!OverlapPawn) return;
+	if (bLocationConditionCompleted || OverlapPawn != Player2DCharacter
+		|| !OverlapPawn || !OverlapPawn->IsPlayerControlled()) return;
 
-	if (!OverlapPawn->IsPlayerControlled()) return;
-
-	RemainConditions--;
-	Start3DTransition();
-
-	// 동일 도달 조건의 중복 처리 방지
+	// All 모드에서도 위치 조건은 정확히 한 번만 완료한다.
+	bLocationConditionCompleted = true;
 	SetReachLocationCollisionEnabled(false);
-
 	ReachLocationBox->OnComponentBeginOverlap.RemoveDynamic(
 		this, &UDimensionShiftComponent::OnBoxBeginOverlap);
+
+	RemainConditions = FMath::Max(0, RemainConditions - 1);
+	Start3DTransition();
 }
 
 void UDimensionShiftComponent::ActiveAIs()
